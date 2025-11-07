@@ -1,0 +1,140 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
+        
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    # Install dependencies for both portals
+    - name: Install Dependencies - Customer Portal
+      run: |
+        cd payments-portal/backend
+        npm ci
+        cd ../frontend
+        npm ci
+
+    - name: Install Dependencies - Employee Portal
+      run: |
+        cd employee-portal/backend
+        npm ci
+        cd ../frontend
+        npm ci
+
+    # SAST using SonarCloud
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    # Software Composition Analysis using Snyk
+    - name: Run Snyk to check for vulnerabilities
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --all-projects
+
+    # OWASP Dependency Check
+    - name: OWASP Dependency Check
+      uses: dependency-check/Dependency-Check_Action@main
+      with:
+        project: 'International-Payments-Portal'
+        path: '.'
+        format: 'HTML'
+        args: >
+          --scan payments-portal/backend 
+          --scan payments-portal/frontend 
+          --scan employee-portal/backend 
+          --scan employee-portal/frontend
+
+    # ESLint security rules check
+    - name: Run ESLint
+      run: |
+        cd payments-portal/backend
+        npm run lint
+        cd ../frontend
+        npm run lint
+        cd ../../employee-portal/backend
+        npm run lint
+        cd ../frontend
+        npm run lint
+
+    # API Security Testing using OWASP ZAP
+    - name: OWASP ZAP API Scan
+      uses: zaproxy/action-api-scan@v0.4.0
+      with:
+        target: 'http://localhost:5001,http://localhost:5002'
+        rules_file_name: '.zap/rules.tsv'
+        cmd_options: '-I'
+
+  api-tests:
+    needs: security-scan
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:4.4
+        ports:
+          - 27017:27017
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18.x'
+
+    # Run API Tests
+    - name: Run API Tests - Customer Portal
+      run: |
+        cd payments-portal/backend
+        npm ci
+        npm test
+      env:
+        MONGODB_URI: mongodb://localhost:27017/test
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+    - name: Run API Tests - Employee Portal
+      run: |
+        cd employee-portal/backend
+        npm ci
+        npm test
+      env:
+        MONGODB_URI: mongodb://localhost:27017/test
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+    # Generate test coverage report
+    - name: Generate Coverage Report
+      run: |
+        cd payments-portal/backend
+        npm run coverage
+        cd ../../employee-portal/backend
+        npm run coverage
+
+    # Upload test results
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: |
+          payments-portal/backend/coverage
+          employee-portal/backend/coverage

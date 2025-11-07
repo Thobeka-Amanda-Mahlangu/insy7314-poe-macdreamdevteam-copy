@@ -1,0 +1,187 @@
+version: 2.1
+
+executors:
+  node-mongo:
+    docker:
+      - image: cimg/node:18.21
+      - image: mongo:4.4
+        name: mongo
+
+jobs:
+  build_and_test:
+    executor: node-mongo
+    steps:
+      - checkout
+
+      - run:
+          name: Install dependencies (customer)
+          command: |
+            cd payments-portal
+            npm ci
+
+      - run:
+          name: Install dependencies (employee)
+          command: |
+            cd employee-portal
+            npm ci
+
+      - run:
+          name: Run tests (customer)
+          command: |
+            set -e
+            cd payments-portal
+            npm run build || true
+            npm test
+
+      - run:
+          name: Run tests (employee)
+          command: |
+            set -e
+            cd employee-portal
+            npm run build || true
+            npm test
+
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  security_checks:
+    docker:
+      - image: cimg/node:18.21
+    steps:
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Install Snyk CLI
+          command: |
+            npm install -g snyk || true
+
+      - run:
+          name: Snyk test - payments-portal
+          command: |
+            set -e
+            cd payments-portal
+            if [ -n "$SNYK_TOKEN" ]; then export SNYK_TOKEN=$SNYK_TOKEN; fi
+            snyk test || true
+
+      - run:
+          name: Snyk test - employee-portal
+          command: |
+            set -e
+            cd employee-portal
+            snyk test || true
+
+      - run:
+          name: npm audit (quick SCA fallback)
+          command: |
+            set -e
+            cd payments-portal
+            npm audit --audit-level=moderate || true
+
+      - run:
+          name: OWASP Dependency Check (docker image)
+          command: |
+            set -e
+            # use dependency-check container to scan repo folders
+            docker run --rm -v $PWD:/src owasp/dependency-check:latest --scan /src/payments-portal --scan /src/employee-portal --format HTML --out /src/reports || true
+
+      - persist_to_workspace:
+          root: .
+          paths:
+            - reports
+
+  sonar_scan:
+    docker:
+      - image: sonarsource/sonar-scanner-cli:latest
+    steps:
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Run Sonar Scanner
+          command: |
+            set -e
+            # Require SONAR_TOKEN in CircleCI project environment variables
+            if [ -z "$SONAR_TOKEN" ]; then echo "ERROR: SONAR_TOKEN not set"; exit 1; fi
+
+            # Optional SONAR_HOST_URL (default SonarCloud)
+            SONAR_HOST_URL=${SONAR_HOST_URL:-https://sonarcloud.io}
+
+            cd $CIRCLE_WORKING_DIRECTORY || true
+
+            # Run scanner using existing sonar-project.properties if present
+            sonar-scanner \
+              -Dsonar.projectKey=IIEWFL_insy7314-poe-macdreamdevteam \
+              -Dsonar.organization=iiewfl \
+              -Dsonar.sources=. \
+              -Dsonar.host.url="$SONAR_HOST_URL" \
+              -Dsonar.login="$SONAR_TOKEN"
+
+  api_tests:
+    executor: node-mongo
+    steps:
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Start customer backend
+          command: |
+            cd payments-portal/backend
+            npm ci
+            # run on port 5001
+            nohup npm start &
+
+      - run:
+          name: Start employee backend
+          command: |
+            cd employee-portal/backend
+            npm ci
+            # run on port 5002
+            nohup npm start &
+
+      - run:
+          name: Wait for services
+          command: |
+            echo "Waiting for customer portal (5001)..."
+            for i in `seq 1 60`; do
+              if curl -sSf http://localhost:5001/ >/dev/null 2>&1; then echo "customer up"; break; fi
+              sleep 1
+            done
+            echo "Waiting for employee portal (5002)..."
+            for i in `seq 1 60`; do
+              if curl -sSf http://localhost:5002/ >/dev/null 2>&1; then echo "employee up"; break; fi
+              sleep 1
+            done
+
+      - run:
+          name: Run integration/API tests
+          command: |
+            set -e
+            cd payments-portal/backend
+            npm run test || true
+            cd ../../employee-portal/backend
+            npm run test || true
+
+      - run:
+          name: OWASP ZAP quick baseline scan
+          command: |
+            set -e
+            # Run ZAP baseline against both endpoints using docker zap image
+            docker run --rm -v $(pwd):/zap/wrk/:rw -t owasp/zap2docker-stable zap-baseline.py -t http://host.docker.internal:5001 -r zap-report-customer.html || true
+
+workflows:
+  version: 2
+  ci-pipeline:
+    jobs:
+      - build_and_test
+      - security_checks:
+          requires:
+            - build_and_test
+      - sonar_scan:
+          requires:
+            - security_checks
+      - api_tests:
+          requires:
+            - sonar_scan

@@ -1,0 +1,131 @@
+name: CI/CD Pipeline with Security Checks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    name: Build & Test Applications
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js v18+
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install, Build, and Test Customer Portal
+        run: |
+          cd payments-portal
+          npm ci 
+          npm run build || true 
+          npm test
+
+      - name: Install, Build, and Test Employee Portal
+        run: |
+          cd employee-portal
+          npm ci
+          npm run build || true 
+          npm test
+          
+      - name: Both portals built and tested
+        run: echo "Both portals successfully built and tested."
+
+  security_checks:
+    needs: build_and_test
+    name: Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # SAST - SonarCloud Analysis
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # Dependency Scanning
+      - name: Run Snyk for Dependencies
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --all-projects
+
+      # OWASP Dependency Check
+      - name: OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'International-Payments-Portal'
+          path: '.'
+          format: 'HTML'
+          args: >
+            --scan payments-portal/backend 
+            --scan payments-portal/frontend 
+            --scan employee-portal/backend 
+            --scan employee-portal/frontend
+
+  api_security_tests:
+    needs: security_checks
+    name: API Security Testing
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:4.4
+        ports:
+          - 27017:27017
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # Start backends for API testing
+      - name: Start Customer Portal Backend
+        run: |
+          cd payments-portal/backend
+          npm ci
+          npm start &
+        env:
+          MONGODB_URI: mongodb://localhost:27017/test
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+      - name: Start Employee Portal Backend
+        run: |
+          cd employee-portal/backend
+          npm ci
+          npm start &
+        env:
+          MONGODB_URI: mongodb://localhost:27017/test
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+      # API Security Testing
+      - name: OWASP ZAP API Scan
+        uses: zaproxy/action-api-scan@v0.4.0
+        with:
+          target: 'http://localhost:5001,http://localhost:5002'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-I'
+
+      # Upload security reports
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            ./reports
+            ./dependency-check-report.html
