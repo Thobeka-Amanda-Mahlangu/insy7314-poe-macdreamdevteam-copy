@@ -18,11 +18,17 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install, Build, and Test Customer Portal
+      - name: Install, Build, and Test Customer Portal (frontend)
         run: |
-          cd payments-portal
-          npm ci 
-          npm run build || true 
+          cd payments-portal/frontend
+          npm ci
+          npm run build || true
+          npm test
+
+      - name: Install and Test Customer Portal (backend)
+        run: |
+          cd payments-portal/backend
+          npm ci
           npm test
 
       - name: Install, Build, and Test Employee Portal
