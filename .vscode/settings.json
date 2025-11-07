@@ -1,0 +1,6 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "SONAR_TOKEN",
+        "projectKey": "Thobeka-Amanda-Mahlangu_insy7314-poe-macdreamdevteam-copy"
+    }
+}

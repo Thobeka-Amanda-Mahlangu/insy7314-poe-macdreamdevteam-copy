@@ -1,0 +1,30 @@
+# === Node modules === #
+backend/node_modules
+frontend/node_modules
+
+# === Environment files (secrets, keys) ===
+
+
+# === Build outputs ===
+frontend/build
+backend/dist
+
+# === Logs ===
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# === OS / Editor junk ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# === SSL certificates (don’t commit private keys) ===
+# backend/infra/certs/*.key
+# backend/infra/certs/*.crt
+# backend/infra/certs/*.pem
+
+# === Coverage / testing ===
+coverage/

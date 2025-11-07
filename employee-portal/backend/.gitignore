@@ -1,0 +1,10 @@
+node_modules/
+
+*.log
+logs/
+.DS_Store
+dist/
+build/
+
+scripts/addEmployee.js
+
