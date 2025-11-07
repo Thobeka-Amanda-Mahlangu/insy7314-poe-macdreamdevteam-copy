@@ -14,9 +14,15 @@ jobs:
       - checkout
 
       - run:
-          name: Install dependencies (customer)
+          name: Install dependencies (payments-portal frontend)
           command: |
-            cd payments-portal
+            cd payments-portal/frontend
+            npm ci
+
+      - run:
+          name: Install dependencies (payments-portal backend)
+          command: |
+            cd payments-portal/backend
             npm ci
 
       - run:
